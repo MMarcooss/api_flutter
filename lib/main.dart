@@ -91,8 +91,9 @@ class _LoginPageState extends State<LoginPage> {
                         labelText: 'Username',
                         prefixIcon: Icon(Icons.person),
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Informe o user' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'Informe o user'
+                          : null,
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -131,19 +132,28 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
   }
-}
+} // <-- Esta chave estava faltando!
 
-/// --- HOME: campo de texto para "N" e listas de Users/Carts ------------------
+/// Página principal que exibe usuários e carrinhos
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.api});
   final DummyJsonApi api;
+
+  const HomePage({super.key, required this.api});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
+/// --- HOME: campo de texto para "N" e listas de Users/Carts ------------------
 class _HomePageState extends State<HomePage> {
+  // --- Filtros ---
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  String? _selectedGender;
+
+  // --- Quantidade (fallback para "últimos N") ---
   final _qtyCtrl = TextEditingController(text: '10');
+
   bool _loading = false;
   String? _error;
   List<User> _users = const [];
@@ -155,14 +165,28 @@ class _HomePageState extends State<HomePage> {
       _error = null;
     });
     try {
-      final n = int.tryParse(_qtyCtrl.text.trim()) ?? 10;
-      final results = await Future.wait([
-        widget.api.getLatestUsers(limit: n),
-        widget.api.getLatestCarts(limit: n),
-      ]);
+      List<User> users;
+
+      // se filtros foram informados → usa busca avançada
+      if (_nameCtrl.text.isNotEmpty ||
+          _emailCtrl.text.isNotEmpty ||
+          (_selectedGender != null && _selectedGender!.isNotEmpty)) {
+        users = await widget.api.users.searchUsersWithFilters(
+          name: _nameCtrl.text,
+          email: _emailCtrl.text,
+          gender: _selectedGender,
+        );
+      } else {
+        // senão, mantém lógica antiga de "últimos N"
+        final n = int.tryParse(_qtyCtrl.text.trim()) ?? 10;
+        users = await widget.api.getLatestUsers(limit: n);
+      }
+
+      final carts = await widget.api.getLatestCarts(limit: 10);
+
       setState(() {
-        _users = results[0] as List<User>;
-        _carts = results[1] as List<Cart>;
+        _users = users;
+        _carts = carts;
       });
     } catch (e) {
       setState(() => _error = e.toString());
@@ -171,63 +195,19 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-
   void _openCart(Cart c) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SizedBox(
-              height: 420,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Carrinho #${c.id} • User ${c.userId}',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: c.products.isEmpty
-                        ? const Center(child: Text('Sem itens neste carrinho.'))
-                        : ListView.separated(
-                            itemCount: c.products.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
-                            itemBuilder: (context, i) {
-                              final p = c.products[i];
-                              return ListTile(
-                                dense: true,
-                                title: Text(p.title),
-                                subtitle: Text('${p.quantity} × ${p.price} = ${p.total}'),
-                                trailing: Text('#${p.id}'),
-                              );
-                            },
-                          ),
-                  ),
-                  const Divider(),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Total bruto:'),
-                      Text(c.total.toString()),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Total com desconto:'),
-                      Text(c.discountedTotal.toString()),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
+      builder: (_) => AlertDialog(
+        title: Text('Cart #${c.id}'),
+        content: Text(
+            'Total: ${c.total} (discounted: ${c.discountedTotal})\nProducts: ${c.totalProducts}, Items: ${c.totalQuantity}'),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Fechar')),
+        ],
+      ),
     );
   }
 
@@ -240,51 +220,84 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Últimos usuários & carrinhos')),
+      appBar: AppBar(title: const Text('Usuários & Carrinhos')),
       body: Column(
         children: [
+          // --- Área de Filtros ---
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _qtyCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Quantidade (N)',
-                      hintText: 'Ex.: 10',
-                      prefixIcon: Icon(Icons.filter_1),
-                    ),
-                    onSubmitted: (_) => _fetch(),
+                TextField(
+                  controller: _nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome ou username',
+                    prefixIcon: Icon(Icons.person_search),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _emailCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _selectedGender,
+                  decoration: const InputDecoration(
+                    labelText: 'Gênero',
+                    prefixIcon: Icon(Icons.people),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'male', child: Text('Masculino')),
+                    DropdownMenuItem(value: 'female', child: Text('Feminino')),
+                  ],
+                  onChanged: (v) => setState(() => _selectedGender = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _qtyCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Qtd. últimos usuários (fallback)',
+                    prefixIcon: Icon(Icons.filter_1),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: _loading ? null : _fetch,
-                  icon: const Icon(Icons.refresh),
+                  icon: const Icon(Icons.search),
                   label: const Text('Buscar'),
                 ),
               ],
             ),
           ),
+
           if (_error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(_error!, style: const TextStyle(color: Colors.red)),
             ),
           if (_loading) const LinearProgressIndicator(),
+
+          // --- Lista ---
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(12),
               children: [
-                const Text('Usuários', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('Usuários',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 ..._users.map((u) => Card(
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundImage: u.image != null ? NetworkImage(u.image!) : null,
-                          child: u.image == null ? const Icon(Icons.person) : null,
+                          backgroundImage:
+                              u.image != null ? NetworkImage(u.image!) : null,
+                          child:
+                              u.image == null ? const Icon(Icons.person) : null,
                         ),
                         title: Text(u.fullName),
                         subtitle: Text('@${u.username} • ${u.email}'),
@@ -292,14 +305,16 @@ class _HomePageState extends State<HomePage> {
                       ),
                     )),
                 const SizedBox(height: 16),
-                const Text('Carrinhos', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('Carrinhos',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 ..._carts.map((c) => Card(
                       child: ListTile(
                         onTap: () => _openCart(c),
                         title: Text('Cart #${c.id} • User ${c.userId}'),
                         subtitle: Text(
-                            '${c.totalProducts} prod. / ${c.totalQuantity} itens • total: ${c.total.toString()} (desc: ${c.discountedTotal.toString()})'),
+                            '${c.totalProducts} prod. / ${c.totalQuantity} itens • total: ${c.total} (desc: ${c.discountedTotal})'),
                         trailing: const Icon(Icons.shopping_cart_outlined),
                       ),
                     )),
